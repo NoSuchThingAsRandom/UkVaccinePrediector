@@ -18,7 +18,7 @@ def toInt(x: str):
         return int(x)
 
 
-def read_data(filename="data_2021-May-17.csv"):
+def read_data(filename="data_2021-May-30.csv"):
     """
     Reads CSV with the provided filename, into a dict of column names, where the value is an array of values per day
     :param filename: The filename to read

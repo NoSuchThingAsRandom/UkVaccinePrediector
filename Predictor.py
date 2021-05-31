@@ -11,7 +11,7 @@ SECOND_DOSE_DELAY = 12 * 7
 
 
 class Predictor:
-    def __init__(self, data: dict, start_date="2021-01-11", avg_start_date="2021-04-07"):
+    def __init__(self, data: dict, start_date="2021-01-11", avg_start_date="2021-04-07", DEBUG=False):
         """
 
         :param data:
@@ -19,7 +19,7 @@ class Predictor:
         :param avg_start_date: The date to start the "average" dose calculations from
         """
         self.data = data
-
+        self.DEBUG = DEBUG
         # The dates upon the targets being reached
         self.date_first_dose_target_reached = None
         self.date_second_dose_target_reached = None
@@ -43,13 +43,31 @@ class Predictor:
 
         self.avg_start_date = avg_start_date
         avg_start_index = list(data["dates"]).index(avg_start_date)
-        self.first_dose_avg = int(numpy.average(data["first_dose_per_day"][avg_start_index]))
-        self.second_dose_avg = int(numpy.average(data["second_dose_per_day"][avg_start_index]))
+
+        self.first_dose_avg = int(numpy.average(data["first_dose_per_day"][avg_start_index:]))
+        self.second_dose_avg = int(numpy.average(data["second_dose_per_day"][avg_start_index:]))
         self.total_dose_avg = self.first_dose_avg + self.second_dose_avg
-        print("Avg Dose Start Index: " + str(avg_start_index))
+
+        self.daily_first_dose_avg = [0] * 7
+        self.daily_second_dose_avg = [0] * 7
+        self.daily_all_dose_avg = [0] * 7
+        size = len(data["first_dose_per_day"])
+        for index in range(7):
+            day_index = (datetime.strptime(avg_start_date, IMPORT_DATE_FORMAT).weekday() + index) % 7
+            self.daily_first_dose_avg[day_index] = int(
+                numpy.average(data["first_dose_per_day"][avg_start_index + index:size:7]))
+            self.daily_second_dose_avg[day_index] = int(
+                numpy.average(data["second_dose_per_day"][avg_start_index + index:size:7]))
+            self.daily_all_dose_avg[day_index] = self.daily_first_dose_avg[day_index] + self.daily_second_dose_avg[day_index]
+
+        print("Avg Dose Start Data:" + str(self.avg_start_date) + " Index: " + str(avg_start_index))
         print("    First Dose Avg: " + str(self.first_dose_avg))
         print("    Second Dose Avg: " + str(self.second_dose_avg))
         print("    Total Dose Avg: " + str(self.total_dose_avg))
+        print("Avg per Day Dose Avg: " + str(self.total_dose_avg))
+        print("    First Dose Avg: " + str(self.daily_first_dose_avg))
+        print("    Second Dose Avg: " + str(self.daily_second_dose_avg))
+        print("    Total Dose Avg: " + str(self.daily_all_dose_avg))
 
         # A list of the backlog of second doses required to administer, per day
         self.second_dose_backlog = [data["cumulative_first_dose"][0] - data["cumulative_second_dose"][0]]
@@ -61,7 +79,7 @@ class Predictor:
         # This is separate from the data to account for predicted dose values
         self.first_doses_given_per_day = [0]
         self.second_doses_given_per_day = [0]
-
+        self.total_doses_given_per_day=[0]
         # The total doses given, per day
         # This is separate from the data to account for predicted dose values
         self.first_doses_given_per_day_cumulative = list(data["cumulative_first_dose"])[1:]
@@ -73,28 +91,31 @@ class Predictor:
 
     def import_existing_data(self):
         for index in range(1, len(self.data["dates"]) - 1):
-            print("-----\nDate: " + str(self.data["dates"][index]))
-
             first_dose_given = self.data["first_dose_per_day"][index]
             self.first_doses_given_per_day.append(first_dose_given)
             self.total_first_doses_given += first_dose_given
-            print("    First Dose:  " + str(first_dose_given))
-            print("    Total First Dose Given: " + str(self.total_first_doses_given))
             self.second_doses_due.append(first_dose_given)
             # The calculated value should be the same as the original value
             assert self.total_first_doses_given == self.first_doses_given_per_day_cumulative[index]
 
             second_dose_given = self.data["second_dose_per_day"][index]
-            self.second_dose_overdue += self.second_doses_due[index - SECOND_DOSE_DELAY]-second_dose_given
+            self.second_dose_overdue += self.second_doses_due[index - SECOND_DOSE_DELAY] - second_dose_given
             self.second_dose_overdue_over_time.append(self.second_dose_overdue)
             self.second_doses_given_per_day.append(second_dose_given)
             self.total_second_doses_given += second_dose_given
-            print("    Second Dose: " + str(second_dose_given))
-            print("    Total Second Dose Given: " + str(self.total_second_doses_given))
 
             dif = first_dose_given - second_dose_given
             self.differences.append(dif)
-            print("    Difference between doses:    " + str(dif))
+            total_dose_given=first_dose_given+second_dose_given
+            self.total_doses_given_per_day.append(total_dose_given)
+            if self.DEBUG:
+                print("-----\nDate: " + str(self.data["dates"][index]))
+                print("    First Dose:  " + str(first_dose_given))
+                print("    Total First Dose Given: " + str(self.total_first_doses_given))
+                print("    Second Dose: " + str(second_dose_given))
+                print("    Total Second Dose Given: " + str(self.total_second_doses_given))
+                print("    Difference between doses:    " + str(dif))
+                print("    Total Dose Given:    " + str(total_dose_given))
 
             self.second_dose_backlog.append(dif + self.second_dose_backlog[-1])
 
@@ -114,10 +135,8 @@ class Predictor:
             new_date = datetime.strptime(self.dates[-1], DISPLAY_DATE_FORMAT)
             new_date += timedelta(days=1)
             self.dates.append(new_date.strftime(DISPLAY_DATE_FORMAT))
-            print("-----\nDate: " + str(new_date))
 
             first_doses_in_offset = sum(self.first_doses_given_per_day[-SECOND_DOSE_DELAY:])
-            print("     Unavailable first doses: " + str(first_doses_in_offset))
 
             # Use average doses, until TARGET reached
             # Then use all available doses for second dose
@@ -133,18 +152,25 @@ class Predictor:
             self.first_doses_given_per_day.append(first_dose_given)
             self.total_first_doses_given += first_dose_given
             self.first_doses_given_per_day_cumulative.append(self.total_first_doses_given)
-            print("    First Dose:  " + str(first_dose_given))
-            print("    Total First Doses Given: " + str(self.total_first_doses_given))
 
             self.second_doses_given_per_day.append(second_dose_given)
             self.total_second_doses_given += second_dose_given
             self.second_doses_given_per_day_cumulative.append(self.total_second_doses_given)
-            print("    Second Dose: " + str(second_dose_given))
-            print("    Total Second Dose Given: " + str(self.total_second_doses_given))
 
             dif = first_dose_given - second_dose_given
             self.differences.append(dif)
-            print("    Difference between doses:    " + str(dif))
+            total_dose_given=first_dose_given+second_dose_given
+            self.total_doses_given_per_day.append(total_dose_given)
+
+            if self.DEBUG:
+                print("-----\nDate: " + str(new_date))
+                print("     Unavailable first doses: " + str(first_doses_in_offset))
+                print("    First Dose:  " + str(first_dose_given))
+                print("    Total First Doses Given: " + str(self.total_first_doses_given))
+                print("    Second Dose: " + str(second_dose_given))
+                print("    Total Second Dose Given: " + str(self.total_second_doses_given))
+                print("    Difference between doses:    " + str(dif))
+                print("    Total Dose Given:    " + str(total_dose_given))
             self.second_dose_backlog.append(dif + self.second_dose_backlog[-1])
 
     def finish_final_doses(self):
@@ -157,7 +183,6 @@ class Predictor:
             new_date = datetime.strptime(self.dates[-1], DISPLAY_DATE_FORMAT)
             new_date += timedelta(days=1)
             self.dates.append(new_date.strftime(DISPLAY_DATE_FORMAT))
-            print("-----\nDate: " + str(new_date))
 
             # Split capacity evenly, until target reached
             # Then use all available doses for second dose
@@ -175,8 +200,6 @@ class Predictor:
             self.first_doses_given_per_day.append(first_dose_given)
             self.total_first_doses_given += first_dose_given
             self.first_doses_given_per_day_cumulative.append(self.total_first_doses_given)
-            print("    First Dose:  " + str(first_dose_given))
-            print("    Total First Doses Given: " + str(self.total_first_doses_given))
 
             self.second_doses_given_per_day.append(second_dose_given)
             self.total_second_doses_given += second_dose_given
@@ -184,12 +207,19 @@ class Predictor:
             if self.total_second_doses_given > TARGET_DOSES and self.date_second_dose_target_reached is None:
                 self.date_second_dose_target_reached = new_date.strftime(DISPLAY_DATE_FORMAT)
 
-            print("    Second Dose: " + str(second_dose_given))
-            print("    Total Second Dose Given: " + str(self.total_second_doses_given))
-
             dif = first_dose_given - second_dose_given
             self.differences.append(dif)
-            print("    Difference between doses:    " + str(dif))
+            total_dose_given=first_dose_given+second_dose_given
+            self.total_doses_given_per_day.append(total_dose_given)
+
+            if self.DEBUG:
+                print("-----\nDate: " + str(new_date))
+                print("    First Dose:  " + str(first_dose_given))
+                print("    Total First Doses Given: " + str(self.total_first_doses_given))
+                print("    Second Dose: " + str(second_dose_given))
+                print("    Total Second Dose Given: " + str(self.total_second_doses_given))
+                print("    Difference between doses:    " + str(dif))
+                print("    Total Dose Given:    " + str(total_dose_given))
 
             self.second_dose_backlog.append(dif + self.second_dose_backlog[-1])
 
@@ -205,28 +235,27 @@ class Predictor:
             new_date = datetime.strptime(self.dates[-1], DISPLAY_DATE_FORMAT)
             new_date += timedelta(days=1)
             self.dates.append(new_date.strftime(DISPLAY_DATE_FORMAT))
-            print("-----\nDate: " + str(new_date))
 
             # Split capacity evenly, until target reached
             # Then use all available doses for second dose
-            second_dose_given = min(int(self.second_doses_due[-SECOND_DOSE_DELAY])+max(0,self.second_dose_overdue),self.second_dose_avg)
-            if self.total_first_doses_given<TARGET_DOSES:
-                first_dose_given = self.total_dose_avg - second_dose_given
+            second_dose_given = min(int(self.second_doses_due[-SECOND_DOSE_DELAY]) + max(0, self.second_dose_overdue),
+                                    self.daily_second_dose_avg[new_date.weekday()])
+            if self.total_first_doses_given < TARGET_DOSES:
+                first_dose_given = self.daily_all_dose_avg[new_date.weekday()] - second_dose_given
             else:
-                first_dose_given=0
-                second_dose_given+=self.total_dose_avg - second_dose_given
+                if self.date_first_dose_target_reached is None:
+                    self.date_first_dose_target_reached = new_date.strftime(DISPLAY_DATE_FORMAT)
+                first_dose_given = 0
+                second_dose_given += self.daily_all_dose_avg[new_date.weekday()] - second_dose_given
 
             self.second_dose_overdue += self.second_doses_due[-SECOND_DOSE_DELAY] - second_dose_given
             self.second_dose_overdue_over_time.append(self.second_dose_overdue)
             self.second_doses_due.append(first_dose_given)
             # second_dose_given = int(self.total_dose_avg / 2)
 
-
             self.first_doses_given_per_day.append(first_dose_given)
             self.total_first_doses_given += first_dose_given
             self.first_doses_given_per_day_cumulative.append(self.total_first_doses_given)
-            print("    First Dose:  " + str(first_dose_given))
-            print("    Total First Doses Given: " + str(self.total_first_doses_given))
 
             self.second_doses_given_per_day.append(second_dose_given)
             self.total_second_doses_given += second_dose_given
@@ -234,13 +263,19 @@ class Predictor:
             if self.total_second_doses_given > TARGET_DOSES and self.date_second_dose_target_reached is None:
                 self.date_second_dose_target_reached = new_date.strftime(DISPLAY_DATE_FORMAT)
 
-            print("    Second Dose: " + str(second_dose_given))
-            print("    Second Dose Overdue: " + str(self.second_dose_overdue))
-            print("    Total Second Dose Given: " + str(self.total_second_doses_given))
-
             dif = first_dose_given - second_dose_given
             self.differences.append(dif)
-            print("    Difference between doses:    " + str(dif))
+            total_dose_given=first_dose_given+second_dose_given
+            self.total_doses_given_per_day.append(total_dose_given)
+            if self.DEBUG:
+                print("-----\nDate: " + str(new_date))
+                print("    First Dose:  " + str(first_dose_given))
+                print("    Total First Doses Given: " + str(self.total_first_doses_given))
+                print("    Second Dose: " + str(second_dose_given))
+                print("    Second Dose Overdue: " + str(self.second_dose_overdue))
+                print("    Total Second Dose Given: " + str(self.total_second_doses_given))
+                print("    Difference between doses:    " + str(dif))
+                print("    Total Dose Given:    " + str(total_dose_given))
 
             self.second_dose_backlog.append(dif + self.second_dose_backlog[-1])
 
@@ -248,71 +283,86 @@ class Predictor:
 
         # Build figure for plotting
         fig, ax = plt.subplots(6, 1)
-        fig.set_size_inches(50, 24)
-        fig.subplots_adjust(top=0.9, bottom=0.1, hspace=0.2, wspace=0.2)
+        fig.set_size_inches(64, 24)
+        fig.subplots_adjust(top=0.9, bottom=0.1, hspace=0.4, wspace=0.2)
 
-        # Normalise for scale
-        differences = list(map(lambda x: x / 100000, self.differences))
-        ax[0].set_title("'Required' Second Doses Against Given Second Doses")
-        ax[0].plot(self.dates[1:], differences)
-        ax[0].set_xlabel("Date")
-        ax[0].set_ylabel("Doses (Per 100,000)")
-        ax[0].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
 
-        # Normalise for scale
-        second_dose_backlog = list(map(lambda x: x / 1000000, self.second_dose_backlog))
-        ax[1].set_title("Second Dose Backlog")
-        ax[1].plot(self.dates, second_dose_backlog)
-        ax[1].set_xlabel("Date")
-        ax[1].set_ylabel("Doses (Per 1,000,000)")
-        ax[1].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
 
-        # Normalise for scale
+        # Daily Doses
         first_doses_given_per_day = list(map(lambda x: x / 100000, self.first_doses_given_per_day))
         second_doses_given_per_day = list(map(lambda x: x / 100000, self.second_doses_given_per_day))
-        ax[2].set_title("Doses Per Day")
-        ax[2].plot(self.dates, first_doses_given_per_day, label="First Dose Per Day")
-        ax[2].plot(self.dates, second_doses_given_per_day, label="Second Dose Per Day")
-        ax[2].set_xlabel("Date")
-        ax[2].set_ylabel("Doses (Per 100,000)")
-        ax[2].legend()
-        ax[2].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
+        total_doses_given_per_day= list(map(lambda x: x / 100000, self.total_doses_given_per_day))
+        ax[0].set_title("Doses Per Day")
+        ax[0].plot(self.dates, first_doses_given_per_day, label="First Dose Per Day")
+        ax[0].plot(self.dates, second_doses_given_per_day, label="Second Dose Per Day")
+        ax[0].plot(self.dates, total_doses_given_per_day, label="Total Dose Per Day")
+        ax[0].set_xlabel("Date")
+        ax[0].set_ylabel("Doses (Per 100,000)")
+        ax[0].legend()
+        ax[0].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
 
-        # Normalise for scale
+        second_doses_due = list(
+            map(lambda x: x / 100000, self.second_doses_due))
+        second_doses_due.append(0)
+        second_doses_given_per_day = list(map(lambda x: x / 100000, self.second_doses_given_per_day))
+        first_doses_given_per_day = list(map(lambda x: x / 100000, self.first_doses_given_per_day))
+        second_doses_given_per_day.extend([0] * (SECOND_DOSE_DELAY))
+        # first_doses_given_per_day.extend([0]*(SECOND_DOSE_DELAY))
+
+        second_doses_due = second_doses_due[:len(self.dates)]
+        second_doses_given_per_day = second_doses_given_per_day[:len(self.dates)]
+        ax[1].set_title("Doses Due vs Given")
+        ax[1].plot(self.dates, second_doses_due, label="Second Doses Due")
+        ax[1].plot(self.dates, second_doses_given_per_day, label="Second Doses Given")
+        #ax[1].plot(self.dates, first_doses_given_per_day, label="First Doses Given")
+        ax[1].set_xlabel("Date")
+        ax[1].set_ylabel("Doses (Per 100,000)")
+        ax[1].legend()
+        ax[1].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
+
+        # Cummalative Doses
         first_doses_given_per_day_cumulative = list(
             map(lambda x: x / 1000000, self.first_doses_given_per_day_cumulative))
         second_doses_given_per_day_cumulative = list(
             map(lambda x: x / 1000000, self.second_doses_given_per_day_cumulative))
         print(first_doses_given_per_day_cumulative)
-        ax[3].set_title("Cumulative Doses")
-        ax[3].plot(self.dates, first_doses_given_per_day_cumulative, label="Cumulative First Dose Per Day")
-        ax[3].plot(self.dates, second_doses_given_per_day_cumulative, label="Cumulative Second Dose Per Day")
+        print(second_doses_given_per_day_cumulative)
+        ax[2].set_title("Cumulative Doses")
+        ax[2].plot(self.dates, first_doses_given_per_day_cumulative, label="Cumulative First Dose Per Day")
+        ax[2].plot(self.dates, second_doses_given_per_day_cumulative, label="Cumulative Second Dose Per Day")
+        ax[2].set_xlabel("Date")
+        ax[2].set_ylabel("Doses (Per 10,000,000)")
+        ax[2].legend()
+        ax[2].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
+
+        # Given 2nd Doses Vs "Required"
+        differences = list(map(lambda x: x / 100000, self.differences))
+        ax[3].set_title("'Required' Second Doses Against Given Second Doses")
+        ax[3].plot(self.dates[1:], differences)
         ax[3].set_xlabel("Date")
-        ax[3].set_ylabel("Doses (Per 10,000,000)")
-        ax[3].legend()
+        ax[3].set_ylabel("Doses (Per 100,000)")
         ax[3].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
+
+        # The backlog of second doses due
+        second_dose_backlog = list(map(lambda x: x / 1000000, self.second_dose_backlog))
+        ax[4].set_title("Second Dose Backlog")
+        ax[4].plot(self.dates, second_dose_backlog)
+        ax[4].set_xlabel("Date")
+        ax[4].set_ylabel("Doses (Per 1,000,000)")
+        ax[4].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
+
 
         second_dose_overdue_over_time = list(
             map(lambda x: x / 1000000, self.second_dose_overdue_over_time))
-        ax[4].plot(self.dates,second_dose_overdue_over_time,label="Overdue Second Doses")
-        ax[4].set_xlabel("Date")
-        ax[4].set_ylabel("Doses (Per 10,000,000)")
-        ax[4].legend()
-        ax[4].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
+        ax[5].plot(self.dates, second_dose_overdue_over_time, label="Overdue Second Doses")
+        ax[5].set_xlabel("Date")
+        ax[5].set_ylabel("Doses (Per 10,000,000)")
+        ax[5].legend()
+        ax[5].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
 
-        # Normalise for scale
-        second_doses_due = list(
-            map(lambda x: x / 1000000, self.second_doses_due))
-        second_doses_due.append(0)
-        second_doses_given_per_day = list(map(lambda x: x / 1000000, self.second_doses_given_per_day))
-        first_doses_given_per_day = list(map(lambda x: x / 1000000, self.first_doses_given_per_day))
-        second_doses_given_per_day.extend([0]*(SECOND_DOSE_DELAY))
-        #first_doses_given_per_day.extend([0]*(SECOND_DOSE_DELAY))
-        print(first_doses_given_per_day_cumulative)
-        second_doses_due=second_doses_due[:len(self.dates)]
-        second_doses_given_per_day=second_doses_given_per_day[:len(self.dates)]
 
-        dates=self.dates
+
+
         """
         for index in range(len(self.second_doses_due)+1-len(self.dates)):
             new_date = datetime.strptime(dates[-1], DISPLAY_DATE_FORMAT)
@@ -321,15 +371,6 @@ class Predictor:
         for index in range(len(dates)):
             print(str(dates[index])+"    "+str(second_doses_due[index])+"    "+str(second_doses_given_per_day[index]))
         """
-        ax[5].set_title("Cumulative Doses")
-        ax[5].plot(dates,second_doses_due, label="Second Doses Due")
-        ax[5].plot(dates,second_doses_given_per_day, label="Second Doses Given")
-        ax[5].plot(dates,first_doses_given_per_day, label="First Doses Given")
-        ax[5].set_xlabel("Date")
-        ax[5].set_ylabel("Doses (Per 10,000,000)")
-        ax[5].legend()
-        ax[5].set_xticks(numpy.arange(0, len(self.dates) + 1, 7))
-
 
         # Add caption detailing some basic stats
         caption_text = "(Using First Dose Average: " + str(self.first_dose_avg) + " and Second Dose Average: " + str(
@@ -352,14 +393,14 @@ class Predictor:
         print("     Total First Given: " + str(self.total_first_doses_given))
         print("Clearing Backlog: " + str(self.second_dose_backlog[-1]))
         print("---------------\n" * 2)
-        #self.clear_backlog()
+        # self.clear_backlog()
         print("---------------\n" * 2)
         print("Backlog Cleared on date: " + self.dates[-1] + " Size: " + str(self.second_dose_backlog[-1]))
         print("---------------\n" * 2)
 
         self.date_backlog_cleared = self.dates[-1]
         self.temp()
-        #self.finish_final_doses()
+        # self.finish_final_doses()
         print("---------------\n" * 2)
         print("Finished Vaccines on: " + str(self.dates[-1]))
         print("Backlog" + str(self.second_dose_backlog))
